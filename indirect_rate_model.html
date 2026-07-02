@@ -296,7 +296,7 @@
       <h1>Indirect Rate Model</h1>
       <div class="tagline">Stop Guessing. Start Knowing.</div>
     </div>
-    <div class="version">v3 &middot; Statement of Indirect Expenses + Labor Utilization</div>
+    <div class="version">v5 &middot; Statement of Indirect Expenses + Labor Utilization</div>
   </div>
 </header>
 
@@ -354,7 +354,7 @@
 
       <div class="toolbar" style="align-items:center;">
         <label style="font-size:13px;font-weight:600;color:var(--navy);">Client:</label>
-        <input type="text" id="clientName" placeholder="e.g. Loui Group" style="max-width:220px;">
+        <input type="text" id="clientName" placeholder="Client or company name" style="max-width:220px;">
         <button class="btn ghost" onclick="saveMapping()">Save Client Mapping</button>
         <label class="btn ghost" style="margin:0;">Load Client Mapping
           <input type="file" id="loadMappingFile" accept=".json" style="display:none;" onchange="loadMapping(this.files[0])">
@@ -362,8 +362,9 @@
       </div>
 
       <div class="note" id="mappingStatus">No client mapping loaded — every account will need a category the first time.</div>
+      <div class="note">Paste your P&amp;L as-is, subtotals and all — rows like "Total Income" or "Net Ordinary Income" are detected automatically and skipped so they can't get double-counted into a pool. If your account field combines a number and name (e.g. "6000 · Rent Expense"), the number is split out automatically.</div>
 
-      <textarea id="pnlPaste" rows="6" style="width:100%;font-family:Calibri, monospace;font-size:13px;border:1px solid var(--line);border-radius:4px;padding:10px;background:#FFFDE7;" placeholder="Paste P&L rows here, e.g.:&#10;Rent Expense	7,788&#10;Software Subscriptions	24,000&#10;Group Health Insurance	220,200"></textarea>
+      <textarea id="pnlPaste" rows="6" style="width:100%;font-family:Calibri, monospace;font-size:13px;border:1px solid var(--line);border-radius:4px;padding:10px;background:#FFFDE7;" placeholder="Paste P&L rows here, e.g.:&#10;6000 · Rent Expense	7,788&#10;7100 · Software Subscriptions	24,000&#10;Total Facilities Expense	7,788"></textarea>
       <div class="toolbar" style="margin-top:10px;">
         <button class="btn primary" onclick="parsePnL()">Parse Pasted Rows</button>
         <button class="btn ghost" onclick="clearPnL()">Clear</button>
@@ -371,7 +372,7 @@
 
       <div class="table-wrap" id="pnlTableWrap" style="display:none;">
         <table>
-          <thead><tr><th>Account Name</th><th>Amount</th><th>Category</th></tr></thead>
+          <thead><tr><th>Acct #</th><th>Account Name</th><th>Amount</th><th>Category</th></tr></thead>
           <tbody id="pnlBody"></tbody>
         </table>
       </div>
@@ -440,6 +441,7 @@
       <p class="sub">Fringe → Overhead → G&amp;A, computed in sequence &mdash; each rate applies to a base that already includes the rate before it. Same methodology as the Solvability Wrap Rate Calculator.</p>
       <div class="toolbar">
         <button class="btn ghost" onclick="copyResultsSummary()">Copy Results Summary</button>
+        <button class="btn primary" onclick="exportCSV()">Export Full Results (CSV)</button>
       </div>
       <div class="rate-cards">
         <div class="rate-card">
@@ -495,7 +497,7 @@
 </main>
 
 <footer>
-  Proprietary and Confidential — Jenny W Clark, Solvability. All Rights Reserved. Shared under NDA. &nbsp;|&nbsp; v3
+  Proprietary and Confidential — Jenny W Clark, Solvability. All Rights Reserved. Shared under NDA. &nbsp;|&nbsp; v5
 </footer>
 
 <script>
@@ -708,8 +710,7 @@ function clearExpenses(){
 }
 
 // ---------- CORE CALCULATION (mirrors Statement of Indirect Expenses formula chain) ----------
-function recalcAll(){
-  updateExpenseTotals();
+function computeModel(){
   // Annual labor dollars from Labor Utilization (monthly totals * 12)
   let monthlyD=0, monthlyOH=0, monthlyGA=0;
   employees.forEach(e=>{
@@ -750,23 +751,7 @@ function recalcAll(){
   const gaPool = gaLabor + gaNonLabor + fringeAppliedGA;
   const gaRate = gaBase !== 0 ? gaPool/gaBase : 0;
 
-  // ---- Rate cards ----
-  document.getElementById('rc-fringe').textContent = pct(fringeRate);
-  document.getElementById('rc-fringe-sub').textContent = fmt(fringePool)+" ÷ "+fmt(fringeBase);
-  document.getElementById('rc-oh').textContent = pct(overheadRate);
-  document.getElementById('rc-oh-sub').textContent = fmt(overheadPool)+" ÷ "+fmt(overheadBase);
-  document.getElementById('rc-ga').textContent = pct(gaRate);
-  document.getElementById('rc-ga-sub').textContent = fmt(gaPool)+" ÷ "+fmt(gaBase);
-
-  // ---- Pool/Base table ----
-  const pb = document.getElementById('poolBaseBody');
-  pb.innerHTML = `
-    <tr><td>Fringe</td><td>${fmt(fringePool)}</td><td>${fmt(fringeBase)}</td><td>${pct(fringeRate)}</td></tr>
-    <tr><td>Overhead</td><td>${fmt(overheadPool)}</td><td>${fmt(overheadBase)}</td><td>${pct(overheadRate)}</td></tr>
-    <tr><td>G&amp;A</td><td>${fmt(gaPool)}</td><td>${fmt(gaBase)}</td><td>${pct(gaRate)}</td></tr>
-  `;
-
-  // ---- Wrap rate stack per $1 Direct Labor ----
+  // Wrap rate stack per $1 Direct Labor
   const DL = 1;
   const FR = fringeRate*DL;
   const OH = overheadRate*(DL+FR);
@@ -777,18 +762,48 @@ function recalcAll(){
   const fee = feePct*totalCost;
   const billingRate = totalCost+fee;
 
-  const stack = document.getElementById('stackBody');
-  stack.innerHTML = `
-    <tr><td>DL — Direct Labor (base)</td><td>-</td><td>${DL.toFixed(4)}</td></tr>
-    <tr><td>FR — Fringe (applied to DL)</td><td>${pct(fringeRate)}</td><td>${FR.toFixed(4)}</td></tr>
-    <tr><td>OH — Overhead (applied to DL + FR)</td><td>${pct(overheadRate)}</td><td>${OH.toFixed(4)}</td></tr>
-    <tr><td>G&amp;A — G&amp;A (applied to DL + FR + OH)</td><td>${pct(gaRate)}</td><td>${GA.toFixed(4)}</td></tr>
-    <tr><td><b>FBLC — Fully Burdened Labor Cost</b></td><td>-</td><td><b>${totalCost.toFixed(4)}</b></td></tr>
-    <tr><td>FEE — Fee (applied to FBLC)</td><td>${pct(feePct,2)}</td><td>${fee.toFixed(4)}</td></tr>
-    <tr><td><b>FBLF — Billing Rate to Government</b></td><td>-</td><td><b>${billingRate.toFixed(4)}</b></td></tr>
+  return {
+    directLabor, ohLabor, gaLabor, directNonLabor,
+    fringePool, fringeBase, fringeRate,
+    overheadPool, overheadBase, overheadRate,
+    gaPool, gaBase, gaRate,
+    DL, FR, OH, GA, totalCost, feePct, fee, billingRate
+  };
+}
+
+function recalcAll(){
+  updateExpenseTotals();
+  const m = computeModel();
+
+  // ---- Rate cards ----
+  document.getElementById('rc-fringe').textContent = pct(m.fringeRate);
+  document.getElementById('rc-fringe-sub').textContent = fmt(m.fringePool)+" ÷ "+fmt(m.fringeBase);
+  document.getElementById('rc-oh').textContent = pct(m.overheadRate);
+  document.getElementById('rc-oh-sub').textContent = fmt(m.overheadPool)+" ÷ "+fmt(m.overheadBase);
+  document.getElementById('rc-ga').textContent = pct(m.gaRate);
+  document.getElementById('rc-ga-sub').textContent = fmt(m.gaPool)+" ÷ "+fmt(m.gaBase);
+
+  // ---- Pool/Base table ----
+  const pb = document.getElementById('poolBaseBody');
+  pb.innerHTML = `
+    <tr><td>Fringe</td><td>${fmt(m.fringePool)}</td><td>${fmt(m.fringeBase)}</td><td>${pct(m.fringeRate)}</td></tr>
+    <tr><td>Overhead</td><td>${fmt(m.overheadPool)}</td><td>${fmt(m.overheadBase)}</td><td>${pct(m.overheadRate)}</td></tr>
+    <tr><td>G&amp;A</td><td>${fmt(m.gaPool)}</td><td>${fmt(m.gaBase)}</td><td>${pct(m.gaRate)}</td></tr>
   `;
 
-  document.getElementById('finalMultiplier').textContent = billingRate.toFixed(4)+"x";
+  // ---- Wrap rate stack ----
+  const stack = document.getElementById('stackBody');
+  stack.innerHTML = `
+    <tr><td>DL — Direct Labor (base)</td><td>-</td><td>${m.DL.toFixed(4)}</td></tr>
+    <tr><td>FR — Fringe (applied to DL)</td><td>${pct(m.fringeRate)}</td><td>${m.FR.toFixed(4)}</td></tr>
+    <tr><td>OH — Overhead (applied to DL + FR)</td><td>${pct(m.overheadRate)}</td><td>${m.OH.toFixed(4)}</td></tr>
+    <tr><td>G&amp;A — G&amp;A (applied to DL + FR + OH)</td><td>${pct(m.gaRate)}</td><td>${m.GA.toFixed(4)}</td></tr>
+    <tr><td><b>FBLC — Fully Burdened Labor Cost</b></td><td>-</td><td><b>${m.totalCost.toFixed(4)}</b></td></tr>
+    <tr><td>FEE — Fee (applied to FBLC)</td><td>${pct(m.feePct,2)}</td><td>${m.fee.toFixed(4)}</td></tr>
+    <tr><td><b>FBLF — Billing Rate to Government</b></td><td>-</td><td><b>${m.billingRate.toFixed(4)}</b></td></tr>
+  `;
+
+  document.getElementById('finalMultiplier').textContent = m.billingRate.toFixed(4)+"x";
 }
 
 // ---------- P&L IMPORT & MAPPING ----------
@@ -803,6 +818,22 @@ const CATEGORY_LABELS = {
   unallow: 'Unallowable',
   ignore: 'Ignore / Not Imported'
 };
+
+function isLikelySubtotal(name){
+  const n = name.trim().toLowerCase();
+  return /^(total|subtotal|net\s|net\b|gross\s+profit|gross\s+margin|ordinary\s+income|net\s+ordinary\s+income|net\s+operating\s+income|net\s+income|operating\s+income|income\s+from\s+operations)\b/.test(n);
+}
+
+function splitAccountNumberAndName(raw){
+  let s = raw.trim();
+  // "6000 · Rent Expense", "6000 - Rent Expense", "6000-Rent Expense", "6000 Rent Expense"
+  let m = s.match(/^(\d{3,7}(?:\.\d+)?)\s*[·\-:]?\s+(.+)$/);
+  if (m && m[2]) return { acctNum: m[1], acctName: m[2].trim() };
+  // "Rent Expense (6000)"
+  let m2 = s.match(/^(.+?)\s*\((\d{3,7}(?:\.\d+)?)\)$/);
+  if (m2) return { acctNum: m2[2], acctName: m2[1].trim() };
+  return { acctNum: '', acctName: s };
+}
 
 function guessCategory(name){
   const key = name.trim().toLowerCase();
@@ -843,7 +874,15 @@ function parsePnL(){
   lines.forEach(line=>{
     const parsed = parsePnLLine(line);
     if (parsed){
-      pnlRows.push({ name: parsed.name, amount: parsed.amount, category: guessCategory(parsed.name) });
+      const {acctNum, acctName} = splitAccountNumberAndName(parsed.name);
+      const subtotal = isLikelySubtotal(acctName);
+      pnlRows.push({
+        acctNum,
+        name: acctName,
+        amount: parsed.amount,
+        category: subtotal ? 'ignore' : guessCategory(acctName),
+        isSubtotal: subtotal
+      });
     }
   });
   renderPnLTable();
@@ -863,11 +902,16 @@ function renderPnLTable(){
   body.innerHTML = '';
   pnlRows.forEach((r,i)=>{
     const tr = document.createElement('tr');
+    if (r.isSubtotal) tr.style.opacity = '0.5';
     const opts = Object.keys(CATEGORY_LABELS).map(k=>
       `<option value="${k}" ${r.category===k?'selected':''}>${CATEGORY_LABELS[k]}</option>`
     ).join('');
+    const nameCell = r.isSubtotal
+      ? `${r.name} <span style="font-size:10.5px;color:#b3541e;">(subtotal — auto-skipped)</span>`
+      : r.name;
     tr.innerHTML = `
-      <td style="text-align:left;">${r.name}</td>
+      <td style="text-align:left;color:#889;">${r.acctNum || ''}</td>
+      <td style="text-align:left;">${nameCell}</td>
       <td>${fmt(r.amount)}</td>
       <td><select onchange="pnlRows[${i}].category=this.value" style="width:100%;padding:5px;border:1px solid var(--line);border-radius:3px;">${opts}</select></td>
     `;
@@ -926,6 +970,74 @@ function loadMapping(file){
     }
   };
   reader.readAsText(file);
+}
+
+// ---------- CSV EXPORT ----------
+function csvEscape(s){
+  s = String(s);
+  if (/[",\n]/.test(s)) return '"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function csvRow(arr){ return arr.map(csvEscape).join(','); }
+function csvMoney(n){ return Math.round(Number(n)||0).toLocaleString('en-US'); }
+
+function exportCSV(){
+  const clientName = document.getElementById('clientName').value.trim() || 'Client';
+  const m = computeModel();
+  const rows = [];
+
+  rows.push(csvRow(['Indirect Rate Model — Results Export']));
+  rows.push(csvRow(['Client', clientName]));
+  rows.push(csvRow(['Date', new Date().toLocaleDateString()]));
+  rows.push('');
+
+  rows.push(csvRow(['LABOR UTILIZATION']));
+  rows.push(csvRow(['Name','Job Title','Annual Salary','% Direct','% OH','% G&A','% Leave','Monthly','Direct $/mo','OH $/mo','G&A $/mo','Leave $/mo']));
+  employees.forEach(e=>{
+    const monthly = (Number(e.salary)||0)/12;
+    const d = monthly*(Number(e.pd)||0);
+    const oh = monthly*(Number(e.poh)||0);
+    const ga = monthly*(Number(e.pga)||0);
+    const lv = monthly*(Number(e.pl)||0);
+    rows.push(csvRow([e.name, e.title, csvMoney(e.salary), pct(Number(e.pd)||0), pct(Number(e.poh)||0), pct(Number(e.pga)||0), pct(Number(e.pl)||0), csvMoney(monthly), csvMoney(d), csvMoney(oh), csvMoney(ga), csvMoney(lv)]));
+  });
+  rows.push('');
+
+  rows.push(csvRow(['STATEMENT OF INDIRECT EXPENSES']));
+  Object.keys(CATEGORY_LABELS).filter(k=>k!=='ignore').forEach(key=>{
+    if (key==='fringe' || key==='oh' || key==='ga' || key==='directNonLabor' || key==='unallow'){
+      rows.push(csvRow([CATEGORY_LABELS[key]]));
+      (expenses[key]||[]).forEach(item=> rows.push(csvRow(['', item[0], csvMoney(item[1])])));
+    }
+  });
+  rows.push('');
+
+  rows.push(csvRow(['RATES']));
+  rows.push(csvRow(['Pool','Pool $','Base $','Rate']));
+  rows.push(csvRow(['Fringe', csvMoney(m.fringePool), csvMoney(m.fringeBase), pct(m.fringeRate)]));
+  rows.push(csvRow(['Overhead', csvMoney(m.overheadPool), csvMoney(m.overheadBase), pct(m.overheadRate)]));
+  rows.push(csvRow(['G&A', csvMoney(m.gaPool), csvMoney(m.gaBase), pct(m.gaRate)]));
+  rows.push('');
+
+  rows.push(csvRow(['WRAP RATE STACK (per $1.00 Direct Labor)']));
+  rows.push(csvRow(['Component','Rate','Amount']));
+  rows.push(csvRow(['DL — Direct Labor (base)','-', m.DL.toFixed(4)]));
+  rows.push(csvRow(['FR — Fringe (applied to DL)', pct(m.fringeRate), m.FR.toFixed(4)]));
+  rows.push(csvRow(['OH — Overhead (applied to DL + FR)', pct(m.overheadRate), m.OH.toFixed(4)]));
+  rows.push(csvRow(['G&A — G&A (applied to DL + FR + OH)', pct(m.gaRate), m.GA.toFixed(4)]));
+  rows.push(csvRow(['FBLC — Fully Burdened Labor Cost','-', m.totalCost.toFixed(4)]));
+  rows.push(csvRow(['FEE — Fee (applied to FBLC)', pct(m.feePct,2), m.fee.toFixed(4)]));
+  rows.push(csvRow(['FBLF — Billing Rate to Government','-', m.billingRate.toFixed(4)]));
+  rows.push('');
+  rows.push(csvRow(['Wrap Rate Multiplier', m.billingRate.toFixed(4)+'x']));
+
+  const csvText = rows.join('\r\n');
+  const blob = new Blob([csvText], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const dateStr = new Date().toISOString().slice(0,10);
+  a.download = `IndirectRateModel_${clientName.replace(/\s+/g,'')}_${dateStr}.csv`;
+  a.click();
 }
 
 // ---------- COPY RESULTS SUMMARY ----------
